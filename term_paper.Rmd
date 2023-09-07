@@ -1,0 +1,331 @@
+---
+title: "Impact of EU Energy Label and Energy Usage on demand for Energy consuming Products"
+author: "Yannick Homberger 19-615-376"
+date: "`r Sys.Date()`"
+affiliation: "University of St. Gallen"
+output: 
+  pdf_document
+bibliography: bibliography.bib
+csl: apa-6th-edition
+nocite: '@*'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(dplyr)
+library(xml2)
+library(stringr)
+library(rlang)
+library(psych)
+library(stargazer)
+library(knitr)
+library(kableExtra)
+```
+
+```{r, include=FALSE}
+## the following code only serves the purpose to manipulate data in order for the display of results for the paper
+## and can therefore be ignored since all of the code is also included in the code file. 
+
+# define the folder name the data is stored in
+folder_path <- "data"
+
+# get list of file names in the folder
+file_names <- list.files(folder_path, pattern = "\\.csv$", full.names = TRUE)
+
+# load all CSV files
+data_all <- lapply(file_names, read.csv)
+
+
+# remove column names from each dataframe
+data_all <- lapply(data_all, setNames, rep("", ncol(data_all[[1]])))
+
+# read column names from a separate CSV file
+namesdf <- read.csv("data/toaster_merged_160.csv")
+col_names <- names(namesdf)
+col_names[1] <- "link"
+
+# Apply column names to each dataframe
+data_all <- lapply(data_all, setNames, col_names)
+
+
+
+# Combine all dataframes into a single dataframe
+combined_data <- do.call(rbind, data_all)
+
+# remove missing prices
+combined_data <- filter(combined_data, !is.na(price))
+# make price numeric
+combined_data <- combined_data %>% mutate(price = as.numeric(str_extract(price, "\\d+")))
+
+# define the columns that contain time information
+comments_time <- col_names[2:19]
+# remove duplicates regarding the comments this is important, since some products
+# have the same comments for example a toaster that only differs
+# by the color but has the same comments
+combined_data <- combined_data %>% distinct(!!!syms(comments_time), .keep_all = TRUE)
+
+# remove missing prices
+combined_data <- filter(combined_data, !is.na(price))
+
+# aggregate the comments over the different time periods
+combined_data <- combined_data %>% rowwise() %>%mutate(sum_comments = sum(!!!syms(comments_time[1:5]))) %>% ungroup()
+
+# delete row without comments
+combined_data <- filter(combined_data, sum_comments > 5)
+
+# create column that contains approximation for initial selling year of product
+# 5 = 4 years or older, 4 = 3 years old, 3 = 2 years old, 2 = 1 year old, 1 = less than 1 year old
+combined_data <- combined_data %>% mutate(selling_year = ifelse(X4_year_ago == 0,
+ ifelse(X3_year_ago == 0, ifelse(X2_year_ago == 0, ifelse(X1_year_ago == 0, 1, 2), 3), 4),5))
+
+```
+
+```{r, include=FALSE}
+# load toaster data and clean it
+toaster_df <- read.csv("data no label/toaster_cleaned_merged_68.csv")
+
+# predifine variables for later selection
+new_name <- c("sum_comments", "power_KW", "price",  "selling_year",
+ "cubic_cm", "Anzahl.Toastscheiben", "Toastertyp")
+
+# transform three variables into numeric
+for (i in c("Länge", "Breite", "Höhe")) {
+  toaster_df <- toaster_df %>%mutate(!!i := as.numeric(gsub("[^0-9.]", "", !!sym(i))))
+}
+# filter select and manipulate the dataframe in order to proceed with the analysis
+toaster_df <- toaster_df %>% filter(!is.na(Anzahl.Toastscheiben)) %>%
+ filter(!is.na(Toastertyp) & Höhe < 80) %>% # delete NA
+  mutate(Toastertyp = ifelse(Toastertyp == "Langschlitztoaster", "Klassischer Toaster", Toastertyp)) %>% 
+   mutate(cubic_cm = Länge * Breite * Höhe) %>%  # get only one variable that represents the dimension of product
+    mutate(Anzahl.Toastscheiben = as.numeric(gsub("[^0-9.]", "", Anzahl.Toastscheiben))) %>% # transfrom to numeric
+      select(all_of(new_name)) %>% filter(if_any(everything(), ~ !is.na(.))) # select predifined variables
+
+# load wasserkocher data and clean it
+wasserkocher_df <- read.csv("data no label/wasserkocher_cleaned_merged_81.csv")
+
+# predifine variables for later selection
+new_name <- c("sum_comments", "power_KW", "price",  "selling_year",
+ "quadratic_cm", "Gewicht", "Volumen",  "Wasserkochertyp")
+
+# transform three variables into numeric
+for (i in c("Länge", "Breite", "Höhe", "Volumen", "Gewicht")) {
+  wasserkocher_df <- wasserkocher_df %>%mutate(!!i := as.numeric(gsub("[^0-9.]", "", !!sym(i))))
+}
+# filter select and manipulate the dataframe in order to proceed with the analysis
+wasserkocher_df <- wasserkocher_df %>%
+  filter(!is.na(power_KW) & Gewicht < 100) %>% # delete NA in energy usage variable
+      mutate(quadratic_cm = Breite * Höhe) %>%  # get only one variable that represents the dimension of product
+      # did not use Länge because there are some observations which include the cable as length
+        select(all_of(new_name)) %>% filter(if_any(everything(), ~ !is.na(.))) # select predifined variables
+
+# load Staubsauger data and clean it
+staubsauger_df <- read.csv("data no label/Staubsauger_cleaned_merged_250.csv")
+
+# predifine variables for later selection
+new_name <- c("sum_comments", "power_KW", "price",  "selling_year",
+ "quadrat_cm", "Gewicht",  "Staubsaugertyp", "Energieversorgung")
+
+# transform three variables into numeric
+for (i in c("Breite", "Höhe", "Gewicht")) {
+  staubsauger_df <- staubsauger_df %>%mutate(!!i := as.numeric(gsub("[^0-9.]", "", !!sym(i))))
+}
+staubsauger_df$Länge
+staubsauger_df$Breite
+staubsauger_df$Höhe
+# filter select and manipulate the dataframe in order to proceed with the analysis
+staubsauger_df <- staubsauger_df %>%
+  filter(!is.na(power_KW) & !is.na(Energieversorgung) & Breite < 120 & Höhe < 150) %>% # delete NA in energy usage variable
+  filter(Kategorie == "StaubsaugeriMehr Informationen zu: Staubsauger") %>% # delete vaccum roboter
+    mutate(Staubsaugertyp = ifelse(grepl("Handstaubsauger", Staubsaugertyp), "Handstaubsauger", "norm_Staubsauger")) %>%
+    mutate(Energieversorgung = ifelse(grepl("Netzbetrieb", Energieversorgung), "Netzbetrieb", "Akku_Batterie")) %>%
+    mutate(quadrat_cm = Breite * Höhe) %>%  # get only one variable that represents the dimension of product
+    mutate(selling_year = as.factor(selling_year)) %>% # change selling year to factor
+      select(all_of(new_name)) %>% filter(if_any(everything(), ~ !is.na(.))) # select predefined variables
+```
+
+```{r, include=FALSE}
+# descriptive statistics for energy labeled data
+label_df <- combined_data %>% filter(!is.na(energy_label))
+
+# define variables to select
+var_name <- c("sum_comments", "energy_label", "prod_type", "price", "selling_year")
+names(label_df)
+head(label_df, 300)
+label_df <- label_df %>% select(all_of(var_name)) %>% filter(prod_type != "toaster") %>% 
+  group_by(prod_type) %>%
+  mutate(label_num = ifelse(energy_label == "A" | energy_label == "A+++", 7, ifelse(energy_label == "B" | energy_label == "A++", 6,
+    ifelse(energy_label == "C" | energy_label == "A+", 5, ifelse(energy_label == "D" | energy_label == "A", 4,
+      ifelse(energy_label == "E" | energy_label == "B", 3, ifelse(energy_label == "F" | energy_label == "C", 2, 1)))))))
+
+# define dataframe for new energy labeled data 
+new_label <- label_df %>% select(all_of(var_name)) %>% filter(prod_type != "toaster") %>% 
+  filter(prod_type %in% c("Backofen", "kaffeevollautomat", "siebtraegermaschine", "waeschetrockner")) %>%
+  # transfrom ordinal level ot energy label to cardinal level
+  mutate(label_num = ifelse(energy_label == "A+++", 7, ifelse(energy_label == "A++", 6,
+    ifelse(energy_label == "A+", 5, ifelse(energy_label == "A", 4,
+      ifelse(energy_label == "B", 3, ifelse(energy_label == "C", 2,  1))))))) %>%
+       select(-energy_label)
+
+# define dataframe for old energy labeled data 
+old_label <- label_df %>% select(all_of(var_name)) %>% filter(prod_type != "toaster") %>% 
+  filter(prod_type %in% c("geschirrspueler", "Kühlschrank", "tv", "waschmaschine")) %>%
+  # transfrom ordinal level ot energy label to cardinal level
+  mutate(label_num = ifelse(energy_label == "A", 7, ifelse(energy_label == "B", 6,
+    ifelse(energy_label == "C", 5, ifelse(energy_label == "D", 4,
+      ifelse(energy_label == "E", 3, ifelse(energy_label == "F", 2, 1))))))) %>%
+       select(-energy_label)
+
+# create descriptive dataframes
+# descriptive statistics for new_label 
+sum_new_label <- new_label %>% mutate(prod_type = ifelse(prod_type == "Backofen", "Oven", 
+  ifelse(prod_type == "kaffeevollautomat", "Coffee machine aut.",
+   ifelse(prod_type == "siebtraegermaschine", "Coffee machine man.", "Tumbler")))) %>%
+    group_by(prod_type) %>% summarise(n_type = n())
+
+desc_new_label <- describe(new_label)[c(2,3,4,8,9)]
+
+
+# descriptive statistics for old_label 
+sum_old_label <- old_label %>% mutate(prod_type = ifelse(prod_type == "geschirrspueler", "Dishwasher", 
+  ifelse(prod_type == "Kühlschrank", "Fridge",
+   ifelse(prod_type == "tv", "TV", "Washing Machine")))) %>%
+    group_by(prod_type) %>% summarise(n_type = n())
+
+desc_old_label <- describe(old_label)[c(2,3,4,8,9)]
+
+# descriptive statistics for non energy labeled data i.e. toaster, vaccum cleaner and waterboiler
+desc_toast <- round(describe(toaster_df)[c(2,3,4,8,9)], 2)
+
+desc_wasserkocher <- round(describe(wasserkocher_df)[c(2,3,4,8,9)], 2)
+
+desc_staubsauger <- round(describe(staubsauger_df)[c(2,3,4,8,9)], 2) 
+
+####---------------------- regression analysis
+
+# regression EU labeled products
+# energy labeled data
+label_model1 <- lm(sum_comments ~  label_num + prod_type + price + as.factor(selling_year) , data = new_label)
+summary(label_model1)
+
+label_model2 <- lm(sum_comments ~  label_num + prod_type + price + as.factor(selling_year) , data = old_label)
+summary(label_model2)
+
+# regression non label products
+# non energy labeled data
+model1 <- lm(sum_comments ~  power_KW + price + as.factor(selling_year) + cubic_cm + Anzahl.Toastscheiben + Toastertyp, data = toaster_df)
+omit_mod1 <-names(model1$coefficients)[c(-2,-3)]
+
+model2 <- lm(sum_comments ~  power_KW + price + as.factor(selling_year) + quadratic_cm + Gewicht + Wasserkochertyp, data = wasserkocher_df)
+omit_mod2 <- names(model2$coefficients)[c(-2,-3,-9)]
+
+
+
+model3 <- lm(sum_comments ~  power_KW + price + as.factor(selling_year) + quadrat_cm + Gewicht + Staubsaugertyp + Energieversorgung, data = staubsauger_df)
+
+```
+# Introduction
+Over recent decades, consumer labels aimed at enhancing transparency have surged in popularity. Notably, sustainability labels, such as the energy efficiency labels from the European Union (EU), have been on the rise [@Andor2019].
+
+Theoretical frameworks posit the existence of information asymmetry in markets, leading to inefficiencies [@Akerlof1970]. In the context of energy consuming product markets, this asymmetry could incentivize consumers to purchase less energy-efficient products due to their potentially lower purchasing price [@Newell2014]. Energy labels are proposed as a means to address this challenge [@Heinzle2011]. Empirical research has been undertaken to explore the effect of energy labels on consumer behavior. Notably, Andor et al. (2019) suggest that the EU label has minimal or no impact on consumer purchasing decisions, a sentiment echoed by Waechter et al. (2015), who found through an eye-tracking study that the EU label barely influenced consumers' choices. Similarly, in a broader context of sustainable food labels, Grankvist (2006)  reported minimal impact of these labels on consumer behavior.
+
+This paper seeks to contribute to this ongoing discussion, specifically in the context of the Swiss online marketplace, with a focus on the platform digitec. The aim is to examine the demand for products bearing EU energy label certifications, considering products like refrigerators and televisions alongside various variables, most notably energy labels. Based on this data, there is conducted a statistical analysis evaluating the causal effect of energy labels on product demand. Furthermore, we probe the demand for three additional energy-consuming products lacking energy labels, investigating the impact of their energy usage on demand.
+
+This two-fold approach aims firstly to assess whether energy labels have a more significant impact on consumer behavior than basic indicators such as the energy usage in KW of a product. Secondly, it could serve as a robustness analysis since more variables are involved in the aforementioned three products compared to those with an energy label. To summarize, the key empirical research question is: "Do EU energy labels significantly affect consumer demand and purchasing behavior, and do other indicators, such as energy usage, also have an impact?"
+
+However, the findings are ambiguous Only the EU labels, which range from a scale of A+++ to D, show some significant results. In that there is a positive effect on product demand. In the analysis involving products without energy labels, those with lower energy consumption did not seem to attract higher demand.
+
+# Data 
+Data for this study is sourced from the website www.digitec.ch, with a focus on a diverse range of energy-consuming products. These include baking ovens, dishwashers, coffee machines, refrigerators, televisions, tumble dryers, washing machines, vacuum cleaners, toasters, and water boilers. It's noteworthy that the last three products - vacuum cleaners, toasters, and water boilers - lack energy labels, and as a result, they are used for a separate analysis. 
+
+The analysis for products without energy labels incorporates additional variables to account for potential confounding factors. The primary variable among these is energy usage. In contrast, products accompanied by EU energy labels include less additional variables, limited to price, product type and EU energy label. Regarding the EU energy label it is important to mention that there are two different label orderings consisting of scales from G (lowest) to A (highest) and D (lowest) to A+++(highest).  
+
+Additionally, each individual product features the number of comments posted on the website, which is subsequently used as an indicator of demand. Based on the comment history, new variables are devised to estimate the beginning of a product's selling period on the website. This approximation is achieved by identifying the earliest comment chronologically and positing the associated year as the product's launch year on the site. Products with comments dating back more than four years are inferred to have been introduced to the website at least four years prior. 
+
+To optimize the data collection process - balancing efficiency, time, and internet resources - the scraping code is designed to prioritize products with a high volume of comments. This approach allows for easier adjustment of the number of products under consideration.The scraping code is specifically programmed to be non-aggressive, initiating a request every 0.5 to 2 seconds, depending on the task. Despite this precaution, occasional website blockages occur, especially during nighttime hours, adding a level of complexity to the process.
+
+Initially, data for approximately 4000 individual products are scraped. Following the data cleaning process, this number dramatically reduces to 485. Of these, 217 products feature energy labels, while 268 do not. The significant decrease in number results from the elimination of duplicate entries. Some products, differing only in color, are listed separately on the digitec platform, yet they share the same comment section, thus yielding identical comment counts across different time periods. To mitigate potential estimation bias, these duplicates are removed. Additionally, also products which did not contain any comments and therefore could not be used for the analysis where initially scraped.  Moreover, certain products are excluded due to missing price data, absence of energy labels, or other missing covariates.
+
+### descriptive statistic
+```{r, results='asis'}
+# create tables for PDF. count of product types
+kable(list(desc_new_label, desc_old_label), "latex", position = "h", booktabs = TRUE, caption = "Summary statistics for energy labeled products. Upper: label (A+++ to D), lower: label (A to G)") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+Table 1 provides summary statistics for products featuring EU energy labels. Variables marked with an * denote factors, with the range of their levels indicated by the minimum (min) to maximum (max) values. For instance, the variable prod_type has 4 levels.
+As for the variable label_num, it represents a cardinal scale of integers ranging from 1 to 7, serving as a direct translation from the alphabetic scale of the EU Energy Label. So for example in the scale from A to G, 7 represents A 6 represents B and so on. This numerical representation allows for a more quantitative analysis of the energy efficiency levels denoted by the EU energy labels. It is interesting to note that in the dataset with scale A to G there are more lower label leveles products represented by a relatively low mean.
+The variable selling_year spans from 1 (representing the current year) to 5 (indicating a product is 4 years old or older). As for the variable label_num, it represents a cardinal scale of integers ranging from 1 to 7, serving as a direct translation from the alphabetic scale of the energy_label. This numerical representation allows for a more quantitative analysis of the energy efficiency levels denoted by the EU energy labels.
+ 
+
+
+```{r, results='asis'}
+# create tables for PDF. count of product types
+kable(list(sum_new_label, sum_old_label), "latex", booktabs = TRUE, caption = "Count of prduct types. Left: label (A+++ to D) right: label (A to G)") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+Table 2 presents the count of different product types that feature EU energy labels. The distribution reflects a lower frequency for ovens, tumble dryers, and dishwashers, indicating that these products are less popular on the website under investigation. This skew in the distribution is reflective of the consumer preference and buying patterns on the platform.
+
+```{r, results='asis'}
+# create tables for PDF. count of product types
+kable(list(desc_toast, desc_wasserkocher, desc_staubsauger), "latex", booktabs = TRUE, caption = "Summary statistics for non labeled prducts. toaster (top), waterboiler (middle), vaccum clener (down)") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+Table 3 showcases summary statistics for products lacking EU energy labels, specifically toasters, water boilers, and vacuum cleaners. Although a broader set of variables was initially scraped from the website, many had to be discarded due to missing values. The variables presented in this table have been retained for further analysis and will be employed in the subsequent regression analysis. The integrity and completeness of these variables are crucial for the robustness of our regression model and the validity of the findings.
+
+# Empirical Strategy/Methods
+
+To uncover the average treatment effect (ATE) of energy labels on consumer behavior, a regression analysis is conducted, using the number of comments as an approximation for the level of consumer demand (the dependent variable). The EU Energy Label level, which varies from G (lowest) to A (highest), and D (lowest) to A+++ (highest) across two scales, serves as the treatment variable. This scale is converted into a cardinal scale from 1 to 7. The regression model also controls for three variables: price, product type (e.g., fridge), and the product's launch date on the platform. For the regression an OLS estimation is conducted with the following simple specifications in which consumer demand ($Y_t$), the cardinal scale structured EU Energy Label $treatment$ and different control variables $control_i$: 
+$$
+Y_t = \beta_0 +\beta_1 treatment + \beta_i control_i
+$$
+
+EU Energy Labels provide certain advantages when it comes to assumption identification. The possibility of confounding problems arising from using a limited number of control variables is lessened due to the structure of the labels. Each label is customized for the product type and provides more detailed product specifications. For instance, refrigerators are categorized by their volume, minimum temperature, minibar inclusion, and more. Such distinction enables labeling of similar products, leading to an implicit comparison of similar products in this empirical analysis.
+
+Nonetheless, some potential confounding issues remain. For instance, no examination is performed for brand preference. If consumers favor a brand that also happens to be energy-efficient, this could introduce bias in the ATE. Even though for some observations these variable was available it would have caused some troubles with the degrees of freedom, since the data set is relatively low compared to the numbers of different brand supplying the products. One way to overcome this challenge would be to aggregate some brand into containers that puts i.e. similar price classes together. Another classification would be the pupularity of a brand. However, in order to succeed in such classification more specific data about the brands is needed. 
+
+Time inconsistency issues might also arise, as seen during the Covid-19 pandemic when restrictions could have artificially boosted online demand (Young et al., 2022). This might lead to an overestimation of the demand for older products, thus creating bias in the ATE coefficient. The product launch variable does account for this to some extent, but the potential impact is worth noting.
+
+A notable challenge arises from the changing specifications of the EU energy labels over time, especially given that some of the products were launched more than four years ago. For instance, the requirements for fridge energy labels have evolved; initially defined by the Commission Delegated Regulation EU in 2010, these were later updated in 2019 (Commission Regulation EU, 2019). Consequently, if the efficiency classification requirements have become stricter or laxer, a product that was classified as B between 2014 and 2019 might now be categorized as A from 2019 to 2023. Such shifts in classification criteria can negatively impact the validity of the Average Treatment Effect (ATE), making it a crucial consideration in this analysis.
+
+In a secondary analysis, products without labels are included. The regression structure is similar to the first analysis, but the treatment variable here is the energy intensity in KW. Due to potential confounding issues, a significantly larger number of control variables are scraped from the platform. For a toaster, for example, these specifications include toaster type, capacity, dimensions price and so on. The brand variable is now included, mitigating a potential confounding issue from the initial analysis. However, vigilance is required regarding other specifications that could impact validity, as well as potential confounding variables.
+# Results
+```{r, results='asis'}
+stargazer(label_model1, label_model2, type = "latex", header = FALSE, float = FALSE,
+          dep.var.caption = "dependent variable: number of comments",
+          dep.var.labels = "",
+          column.labels = c("A+++ to D", "A to G"),
+          covariate.labels=c("EU Energy Label", "price", "selling year 1", "selling year 2", "selling year 3", "selling year 4", "coffee machine aut", "coffee machine man", "tumbler", "fridge","TV", "washing machine"),
+          omit.stat=c("rsq", "adj.rsq"),
+          order = c(1,8:12),
+          omit = c("Constant"),
+          df = FALSE)
+```
+
+The initial results table reveals significant effects in the first regression, which includes products adhering to the EU Energy Label scale from A+++ to D. The Average Treatment Effect (ATE) is positive at 25.936, indicating that energy labels exert a positive influence on product demand. The magnitude of this effect suggests an average increase of 25 comments for each label level. Given that the average number of comments is 60 in the data sample, this represents a considerable impact. However, the coefficient of the treatment in this regression is an average, potentially obscuring heterogeneous effects across the level spectrum. As might be expected, some control variables, such as price and selling year, also influence demand. 
+
+Yet, for the second regression - comprising products within the scale from A to G - no significant ATE on demand emerges. This is somewhat surprising since one could think of the two scaling systems as very similar. Which should lead to a similar result. However, there could be several reasons statistical reasons why it is not the case. On the one hand there are the mentioned omitted confounding variables that introduce bias. On the other hand the number of observations are relatively low which can lead to some statistical problems. In conclusion, the results of both regressions could be challenged and do not appear as robust as they should in order to conclude a scientific proposal.
+
+```{r, results='asis'}
+stargazer(model1, model2, model3, header = FALSE,  type = "latex", float = FALSE,
+          dep.var.caption = "dependent variable: number of comments",
+          dep.var.labels = "",
+          column.labels = c("Waterboiler", "Toaster", "Vacuum cleaner"),
+          omit.stat = c("rsq", "adj.rsq"),
+          covariate.labels=c("power input KW", "price", "selling year 1", "selling year 2", "selling year 3", "selling year 4", "quadrat cm", "weight kg", "vacuum type", "no batterie"),
+          df = FALSE,
+          omit = c(omit_mod1, omit_mod2, "Constant"), 
+          out = NULL)
+```
+The second table, which displays regression results for products without energy labels, reveals no significant treatment effect of a product's energy usage on demand. All variables specified in the descriptive oversight of table 3 where included in the regression. However, due to space saving considerations are not displayed in this regression table.
+
+This results could suggest either consumer indifference to energy consumption or inadequate information about the actual energy usage of purchased products. A third option could be that the variable of power input in kilowatts is somewhat coarse and doesn't necessarily reflect a product's yearly energy consumption. For instance, a water boiler might appear to consume more energy due to a high energy input in KW, yet it might heat water so efficiently compared to a lower-energy counterpart that it ends up being more energy-efficient overall. A more accurate indicator would be the energy input required to boil one liter of water. These considerations apply to other products as well.
+
+# Concluding remarks
+The results yield mixed effects, possibly due to the presence of some omitted variables. Nevertheless, the EU energy label scale from A+++ to D appears to have a positive impact.
+
+The segment of the analysis concerning products without energy labels yielded no significant results. Moreover, it is debatable whether the current approach effectively identifies energy-efficient products. Further analysis would necessitate identifying suitable indicators to replace the raw input in KW for each product, followed by appropriate data collection.
+
+Another issue to address is the limited number of data points in this analysis. One possible solution would be to collaborate with various online sellers to access more control variables, enhance the approximation of demand, and establish time-stamp variables. Such data would allow the construction of a more robust inter temporal regression method.
+
+# Bibliography
+
